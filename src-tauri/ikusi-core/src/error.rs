@@ -22,6 +22,18 @@ pub enum CoreError {
     #[error("Tiempo de espera agotado preparando la reproducción")]
     Timeout,
 
+    #[error("Cancelado")]
+    Cancelled,
+
+    #[error("{0}")]
+    Api(String),
+
+    #[error("La traducción falló: {0}")]
+    Translation(String),
+
+    #[error("La transcripción falló: {0}")]
+    Transcription(String),
+
     #[error("Error de entrada/salida: {0}")]
     Io(#[from] std::io::Error),
 

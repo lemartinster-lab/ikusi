@@ -30,13 +30,6 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 video { width: 100%; height: 100%; object-fit: contain; background: #000; outline: none; }
 video.invisible { position: absolute; opacity: 0; pointer-events: none; }
-video::cue {
-  font-size: clamp(18px, 3.2vh, 40px);
-  line-height: 1.3;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.55);
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
-}
 
 /* ---------- Pantalla vacía ---------- */
 .empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: radial-gradient(ellipse at center, #17171c 0%, var(--bg) 70%); padding: 24px; }
@@ -107,15 +100,15 @@ video::cue {
 .small-btn:hover { background: rgba(255, 255, 255, 0.08); }
 .small-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 
-.playlist { width: 300px; display: flex; flex-direction: column; border-width: 0 0 0 1px; background: var(--panel-solid); }
-.playlist ol { list-style: none; margin: 0; padding: 0 6px 10px; overflow-y: auto; flex: 1; }
-.playlist li { display: flex; align-items: center; border-radius: 7px; }
-.playlist li:hover { background: rgba(255, 255, 255, 0.06); }
-.playlist li.current { background: var(--accent-soft); color: var(--accent); }
+.side-panel { width: 320px; display: flex; flex-direction: column; border-width: 0 0 0 1px; background: var(--panel-solid); }
+.side-list { list-style: none; margin: 0; padding: 0 6px 10px; overflow-y: auto; flex: 1; }
+.side-list li { display: flex; align-items: center; border-radius: 7px; }
+.side-list li:hover { background: rgba(255, 255, 255, 0.06); }
+.side-list li.current { background: var(--accent-soft); color: var(--accent); }
 .item-name { flex: 1; min-width: 0; text-align: left; padding: 7px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item-num { display: inline-block; width: 24px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.playlist .remove { opacity: 0; width: 28px; height: 28px; }
-.playlist li:hover .remove { opacity: 0.8; }
+.side-list .remove { opacity: 0; width: 28px; height: 28px; flex-shrink: 0; }
+.side-list li:hover .remove { opacity: 0.8; }
 .pad { padding: 0 14px; }
 
 /* ---------- Avisos ---------- */
@@ -125,3 +118,73 @@ video::cue {
 @keyframes spin { to { transform: rotate(360deg); } }
 .error-toast { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); max-width: 80%; display: flex; gap: 10px; align-items: flex-start; background: rgba(60, 14, 10, 0.95); border: 1px solid rgba(255, 90, 70, 0.4); color: #ffd2cb; padding: 10px 8px 10px 14px; border-radius: var(--radius); white-space: pre-wrap; user-select: text; -webkit-user-select: text; }
 .drop-overlay { position: absolute; inset: 14px; border: 2px dashed var(--accent); border-radius: 16px; background: rgba(255, 136, 0, 0.08); display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 600; color: var(--accent); pointer-events: none; }
+
+/* ---------- Fase 2: subtítulos propios ---------- */
+.subtitles {
+  position: absolute; left: 6%; right: 6%; bottom: 5%;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  pointer-events: none; text-align: center; transition: bottom 0.25s ease;
+}
+.subtitles.raised { bottom: 96px; }
+.sub-line { line-height: 1.25; }
+.sub-box { background: rgba(0, 0, 0, 0.6); padding: 1px 8px; border-radius: 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.sub-primary { font-size: clamp(18px, 3.3vh, 42px); color: #fff; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); }
+.sub-secondary { font-size: clamp(15px, 2.6vh, 34px); color: #ffd28a; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9); }
+
+/* ---------- Barra: marcadores y A-B ---------- */
+.seek-marker { position: absolute; top: -3px; width: 2px; height: calc(100% + 6px); margin-left: -1px; background: #9fd3ff; border-radius: 1px; pointer-events: none; }
+.seek-ab { position: absolute; top: -2px; height: calc(100% + 4px); background: rgba(255, 210, 138, 0.45); border-left: 2px solid #ffd28a; border-right: 2px solid #ffd28a; pointer-events: none; }
+.seek-ab.pending { border-right: 0; }
+.ab-badge { color: #ffd28a; border-color: rgba(255, 210, 138, 0.5); }
+
+/* ---------- Panel lateral con pestañas ---------- */
+.tabs { display: flex; gap: 4px; }
+.tabs button { padding: 5px 10px; border-radius: 7px; font-size: 13px; color: var(--muted); }
+.tabs button.active { background: rgba(255, 255, 255, 0.08); color: var(--text); font-weight: 600; }
+.side-panel footer { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line); }
+.side-list.bookmarks li { flex-direction: column; align-items: stretch; padding: 6px 4px; }
+.bm-head { display: flex; align-items: center; gap: 6px; }
+.bm-time { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; padding: 2px 4px; border-radius: 5px; }
+.bm-time:hover { background: var(--accent-soft); }
+.bm-note { flex: 1; min-width: 0; background: transparent; border: 1px solid transparent; border-radius: 6px; color: var(--text); padding: 4px 6px; font: inherit; user-select: text; -webkit-user-select: text; }
+.bm-note:hover, .bm-note:focus { border-color: var(--line); background: rgba(0, 0, 0, 0.25); outline: none; }
+.bm-quote { margin: 2px 0 0 52px; font-size: 12.5px; color: var(--muted); white-space: pre-line; }
+.bm-quote.second { color: #c9a66a; font-style: italic; }
+
+/* ---------- Menú de pistas: campos ---------- */
+.field { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+select, input[type="password"], input[type="text"] {
+  background: rgba(0, 0, 0, 0.35); color: var(--text); border: 1px solid var(--line); border-radius: 7px;
+  padding: 5px 8px; font: inherit; font-size: 13px; user-select: text; -webkit-user-select: text;
+}
+select:focus, input:focus { outline: 1px solid var(--accent); }
+.link-row { display: flex; gap: 14px; margin-top: 4px; }
+.ai-row { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+.ai-row .small-btn { flex: 1; text-align: left; padding: 5px 8px; }
+.ai-row select { width: 112px; }
+
+/* ---------- Ajustes ---------- */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 20; }
+.settings { width: min(520px, 92vw); max-height: 88vh; overflow-y: auto; border-radius: 14px; padding-bottom: 10px; }
+.settings section { padding: 10px 16px; border-top: 1px solid var(--line); }
+.field-row { display: flex; gap: 8px; margin-top: 6px; }
+.field-row input { flex: 1; }
+.ok-line, .warn-line { font-size: 13px; margin: 4px 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.ok-line { color: #9fe0a8; }
+.warn-line { color: #ffcf8a; }
+code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: rgba(255, 255, 255, 0.08); padding: 1px 5px; border-radius: 4px; user-select: text; -webkit-user-select: text; }
+.text-btn.danger { color: #ff8d7d; }
+.model-list .option { display: grid; grid-template-columns: auto 110px 1fr auto; gap: 8px; align-items: center; }
+.model-name { font-weight: 600; }
+.ok-badge { font-size: 11px; color: #9fe0a8; border: 1px solid rgba(159, 224, 168, 0.4); border-radius: 999px; padding: 1px 8px; }
+.settings-message { margin: 6px 16px 0; font-size: 13px; color: var(--accent); }
+.empty-actions { display: flex; gap: 8px; align-items: center; }
+
+/* ---------- Tarea de IA ---------- */
+.ai-toast { position: absolute; left: 16px; top: 16px; width: 300px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); z-index: 5; }
+.ai-toast-row { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.ai-toast-row span:first-child { flex: 1; }
+.ai-bar { margin-top: 8px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.ai-bar-fill { height: 100%; background: var(--accent); transition: width 0.3s ease; }
+.ai-bar-fill.indeterminate { animation: slide 1.2s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }

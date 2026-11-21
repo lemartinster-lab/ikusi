@@ -125,3 +125,45 @@ async fn mkv_remux_transcode_and_subtitles() {
 
     mgr.shutdown().await;
 }
+
+/// Transcripción real con whisper.cpp. Necesita `IKUSI_TEST_WHISPER_MODEL`
+/// apuntando a un modelo ggml (vale uno de prueba); si no, se omite.
+#[tokio::test]
+async fn whisper_pipeline_produces_vtt_with_progress() {
+    use ikusi_core::transcribe::{self, Stage, TranscribeJob};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::{Arc, Mutex};
+
+    let (Ok(bins), Some(whisper), Some(model)) = (
+        Binaries::locate(),
+        transcribe::locate_whisper(),
+        std::env::var_os("IKUSI_TEST_WHISPER_MODEL").map(PathBuf::from),
+    ) else {
+        eprintln!("whisper-cli o modelo no disponibles: prueba omitida");
+        return;
+    };
+    let work = tempfile::tempdir().unwrap();
+    let mkv = make_sample_mkv(&bins, work.path());
+
+    let stages = Arc::new(Mutex::new(Vec::new()));
+    let s2 = stages.clone();
+    let job = TranscribeJob {
+        ffmpeg: &bins.ffmpeg,
+        whisper: &whisper,
+        model: &model,
+        input: &mkv,
+        audio_stream: Some(1),
+        language: "eu",
+        duration: Some(12.0),
+        work_dir: &work.path().join("whisper"),
+    };
+    let vtt = transcribe::transcribe(job, Arc::new(move |s| s2.lock().unwrap().push(s)), Arc::new(AtomicBool::new(false)))
+        .await
+        .unwrap();
+    assert!(vtt.starts_with("WEBVTT"), "{vtt}");
+
+    let stages = stages.lock().unwrap();
+    assert!(stages.iter().any(|s| matches!(s, Stage::ExtractingAudio(p) if *p > 0.0)), "{stages:?}");
+    assert_eq!(stages.last(), Some(&Stage::Transcribing(100.0)));
+    assert!(!work.path().join("whisper/audio.wav").exists(), "el WAV temporal se borra");
+}

@@ -2,46 +2,52 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
+import { AiTaskToast } from "./components/AiTaskToast";
 import { Controls } from "./components/Controls";
 import { EmptyState } from "./components/EmptyState";
-import { Playlist } from "./components/Playlist";
-import { TrackMenu, type SubtitleOption } from "./components/TrackMenu";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { SidePanel, type SideTab } from "./components/SidePanel";
+import { SubtitleOverlay } from "./components/SubtitleOverlay";
+import { TrackMenu } from "./components/TrackMenu";
 import { useAutoHide } from "./hooks/useAutoHide";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { useOsd } from "./hooks/useOsd";
-import { useSubtitleTrack } from "./hooks/useSubtitleTrack";
+import { useSubtitles } from "./hooks/useSubtitles";
+import { abActive, abJumpTarget, abNext, AB_EMPTY, type AbState } from "./lib/abLoop";
+import { aiApi, onAiProgress, type AiProgress } from "./lib/aiApi";
+import {
+  addBookmark, bookmarksKey, bookmarksToMarkdown, newBookmark, removeBookmark, updateNote, type Bookmark,
+} from "./lib/bookmarks";
 import { formatDelay, formatTime } from "./lib/formatTime";
 import { api, type OpenOptions } from "./lib/playbackApi";
-import { addRecent, getRecents, getVolume, kv, setVolume as persistVolume } from "./lib/persist";
+import {
+  addRecent, getRecents, getSettings, getVolume, kv, saveSettings, setVolume as persistVolume,
+} from "./lib/persist";
 import {
   AUDIO_EXTENSIONS, fileName, isSubtitlePath, mergePlaylist, stepIndex, SUBTITLE_EXTENSIONS, toPlaylist,
   VIDEO_EXTENSIONS, type PlaylistItem,
 } from "./lib/playlist";
 import { loadResume, saveResume } from "./lib/resume";
 import { planSeek } from "./lib/seek";
+import { DEFAULT_SETTINGS, LANGUAGES, type Settings } from "./lib/settings";
 import { nextSpeed, type Action } from "./lib/shortcuts";
 import { srtToVtt } from "./lib/srtToVtt";
-import { audioLabel, subtitleLabel } from "./lib/tracks";
-import type { MediaInfo, PlaybackSource } from "./lib/types";
+import { audioLabel } from "./lib/tracks";
+import type { PlaybackSource } from "./lib/types";
+import { activeCues, serializeSrt, serializeVtt, type Cue } from "./lib/vtt";
 
 type Source = PlaybackSource & { path: string; forced: boolean };
 
 const SAVE_EVERY_MS = 5000;
 
-function embeddedSubtitleOptions(info: MediaInfo): SubtitleOption[] {
-  return info.subtitles.map((s, i) => ({
-    id: `emb:${s.index}`,
-    label: subtitleLabel(s, i),
-    source: { kind: "embedded", streamIndex: s.index },
-    disabled: !s.textBased,
-  }));
-}
+const langName = (code: string) => LANGUAGES.find((l) => l.code === code)?.name ?? code;
+const baseName = (path: string) => fileName(path).replace(/\.[^.]+$/, "");
+const textAt = (cues: Cue[] | null, t: number) => (cues ? activeCues(cues, t).map((c) => c.text).join("\n") : "");
 
 export default function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
 
   // --- Lista y fuente actual ---
   const [items, setItems] = useState<PlaylistItem[]>([]);
@@ -61,19 +67,22 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [rate, setRate] = useState(1);
   const [fullscreen, setFullscreen] = useState(false);
-  const [showPlaylist, setShowPlaylist] = useState(false);
-  const [showTracks, setShowTracks] = useState(false);
   const [dragging, setDragging] = useState(false);
 
-  // --- Subtítulos ---
-  const [subOptions, setSubOptions] = useState<SubtitleOption[]>([]);
-  const [activeSub, setActiveSub] = useState<string | null>(null);
-  const [activeVtt, setActiveVtt] = useState<string | null>(null);
-  const [subDelay, setSubDelay] = useState(0);
-  const vttCache = useRef(new Map<string, string>());
+  // --- Paneles ---
+  const [showSide, setShowSide] = useState(false);
+  const [sideTab, setSideTab] = useState<SideTab>("playlist");
+  const [showTracks, setShowTracks] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+
+  // --- Fase 2 ---
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [ab, setAb] = useState<AbState>(AB_EMPTY);
+  const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  const [aiTask, setAiTask] = useState<{ starting: string; progress: AiProgress | null } | null>(null);
 
   const osd = useOsd();
-  const { visible: controlsVisible, poke } = useAutoHide(!paused && !showTracks && !loading);
+  const { visible: controlsVisible, poke } = useAutoHide(!paused && !showTracks && !loading && !showSettings);
 
   // Refs con los valores más recientes, para callbacks asíncronos y eventos.
   const sourceRef = useRef<Source | null>(null);
@@ -87,15 +96,11 @@ export default function App() {
   const lastSave = useRef(0);
   const reloadTimer = useRef<number | undefined>(undefined);
 
+  const getPath = useCallback(() => sourceRef.current?.path ?? null, []);
+  const subs = useSubtitles(getPath, osd);
+
   const current = index != null ? items[index] ?? null : null;
   const duration = source?.info.duration ?? null;
-
-  useSubtitleTrack(
-    videoEl,
-    activeVtt,
-    subDelay - (source?.offset ?? 0),
-    source ? `${source.url}|${source.offset}` : "",
-  );
 
   // ---------------------------------------------------------------- carga
 
@@ -133,21 +138,19 @@ export default function App() {
   const playPath = useCallback(
     async (path: string) => {
       await persistPosition();
-      vttCache.current.clear();
-      setActiveSub(null);
-      setActiveVtt(null);
-      setSubDelay(0);
-      setSubOptions([]);
+      subs.reset(null);
       setShowTracks(false);
+      setAb(AB_EMPTY);
+      setBookmarks((await kv.get<Bookmark[]>(bookmarksKey(path)).catch(() => undefined)) ?? []);
 
       const resumeAt = await loadResume(kv, path).catch(() => null);
       addRecent(path).then(setRecents).catch(() => {});
       const src = await openSource(path, { start: resumeAt ?? 0 });
       if (!src) return;
-      setSubOptions(embeddedSubtitleOptions(src.info));
+      subs.reset(src.info);
       if (resumeAt) osd.show(`Reanudando en ${formatTime(resumeAt)}`, 2500);
     },
-    [openSource, persistPosition, osd],
+    [openSource, persistPosition, osd, subs.reset],
   );
 
   const playIndex = useCallback(
@@ -167,10 +170,11 @@ export default function App() {
     setIndex(null);
     setLoading(false);
     setPaused(true);
-    setActiveVtt(null);
-    setActiveSub(null);
+    setAb(AB_EMPTY);
+    setBookmarks([]);
+    subs.reset(null);
     await api.stopPlayback().catch(() => {});
-  }, [persistPosition]);
+  }, [persistPosition, subs.reset]);
 
   const loadSubtitleFile = useCallback(
     async (path: string) => {
@@ -181,19 +185,13 @@ export default function App() {
       try {
         const f = await api.loadSubtitleFile(path);
         const vtt = f.format === "srt" ? srtToVtt(f.text) : f.text;
-        const id = `ext:${path}`;
-        setSubOptions((prev) => [
-          ...prev.filter((o) => o.id !== id),
-          { id, label: fileName(path), source: { kind: "external", vtt } },
-        ]);
-        setActiveSub(id);
-        setActiveVtt(vtt);
+        subs.addText({ id: `ext:${path}`, label: fileName(path), language: null, vtt }, "primary");
         osd.show(`Subtítulos: ${fileName(path)}`);
       } catch (e) {
         osd.show(String(e), 3500);
       }
     },
-    [osd],
+    [osd, subs.addText],
   );
 
   /** Añade rutas (arrastradas, abiertas o desde el Finder) y reproduce la primera. */
@@ -273,16 +271,13 @@ export default function App() {
     [openSource],
   );
 
-  const changeVolume = useCallback(
-    (v: number) => {
-      const clamped = Math.round(Math.min(1, Math.max(0, v)) * 100) / 100;
-      setVolume(clamped);
-      setMuted(false);
-      void persistVolume(clamped).catch(() => {});
-      return clamped;
-    },
-    [],
-  );
+  const changeVolume = useCallback((v: number) => {
+    const clamped = Math.round(Math.min(1, Math.max(0, v)) * 100) / 100;
+    setVolume(clamped);
+    setMuted(false);
+    void persistVolume(clamped).catch(() => {});
+    return clamped;
+  }, []);
 
   const selectAudio = useCallback(
     (track: number) => {
@@ -293,35 +288,6 @@ export default function App() {
       void openSource(s.path, { start: timeRef.current, audioTrack: track, forceTranscode: s.forced }, !(v?.paused ?? true));
     },
     [openSource, osd],
-  );
-
-  const selectSubtitle = useCallback(
-    async (id: string | null) => {
-      const s = sourceRef.current;
-      if (id === null) {
-        setActiveSub(null);
-        setActiveVtt(null);
-        osd.show("Subtítulos desactivados");
-        return;
-      }
-      const opt = subOptions.find((o) => o.id === id);
-      if (!s || !opt || opt.disabled) return;
-      let vtt = opt.source.kind === "external" ? opt.source.vtt : vttCache.current.get(id);
-      if (!vtt && opt.source.kind === "embedded") {
-        osd.show("Cargando subtítulos…", 15000);
-        try {
-          vtt = await api.extractSubtitle(s.path, opt.source.streamIndex);
-          vttCache.current.set(id, vtt);
-        } catch (e) {
-          osd.show(String(e), 3500);
-          return;
-        }
-      }
-      setActiveSub(id);
-      setActiveVtt(vtt ?? null);
-      osd.show(`Subtítulos: ${opt.label}`);
-    },
-    [subOptions, osd],
   );
 
   const toggleFullscreen = useCallback(async (force?: boolean) => {
@@ -340,23 +306,189 @@ export default function App() {
     [index, items.length, playIndex],
   );
 
+  const updateSettings = useCallback((s: Settings) => {
+    setSettings(s);
+    void saveSettings(s).catch(() => {});
+  }, []);
+
+  // ---------------------------------------------------- marcadores y A-B
+
+  const persistBookmarks = useCallback((path: string, list: Bookmark[]) => {
+    setBookmarks(list);
+    void (list.length ? kv.set(bookmarksKey(path), list) : kv.delete(bookmarksKey(path))).catch(() => {});
+  }, []);
+
+  const markNow = useCallback(() => {
+    const s = sourceRef.current;
+    if (!s) return;
+    const t = timeRef.current;
+    const b = newBookmark(t, textAt(subs.primaryCues, t - subs.delay), textAt(subs.secondaryCues, t - subs.delay));
+    persistBookmarks(s.path, addBookmark(bookmarks, b));
+    osd.show(`Marcador en ${formatTime(t)}`);
+  }, [bookmarks, persistBookmarks, osd, subs.primaryCues, subs.secondaryCues, subs.delay]);
+
+  const bookmarksMarkdown = () =>
+    bookmarksToMarkdown({ title: current?.name ?? "Ikusi", path: source?.path ?? "", bookmarks });
+
+  const exportBookmarks = async () => {
+    if (!source) return;
+    const path = await saveDialog({
+      title: "Exportar marcadores",
+      defaultPath: `${baseName(source.path)} — marcadores.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (!path) return;
+    try {
+      await aiApi.saveTextFile(path, bookmarksMarkdown());
+      osd.show(`Guardado: ${fileName(path)}`);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const copyBookmarks = async () => {
+    try {
+      await navigator.clipboard.writeText(bookmarksMarkdown());
+      osd.show("Marcadores copiados en Markdown");
+    } catch {
+      osd.show("No se pudo copiar; usa Exportar");
+    }
+  };
+
+  const saveSubtitles = async () => {
+    if (!source || !subs.primaryCues) return;
+    const path = await saveDialog({
+      title: "Guardar subtítulos",
+      defaultPath: `${baseName(source.path)}.srt`,
+      filters: [
+        { name: "SubRip", extensions: ["srt"] },
+        { name: "WebVTT", extensions: ["vtt"] },
+      ],
+    });
+    if (!path) return;
+    const text = path.toLowerCase().endsWith(".vtt") ? serializeVtt(subs.primaryCues) : serializeSrt(subs.primaryCues);
+    try {
+      await aiApi.saveTextFile(path, text);
+      osd.show(`Guardado: ${fileName(path)}`);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  // Bucle A‑B: comprobar en cada fotograma (el evento timeupdate es demasiado lento).
+  useEffect(() => {
+    if (!abActive(ab)) return;
+    let raf = 0;
+    const tick = () => {
+      const v = videoRef.current;
+      const s = sourceRef.current;
+      if (v && s && !v.paused) {
+        const target = abJumpTarget(ab, s.offset + v.currentTime);
+        if (target != null) seekTo(target);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [ab, seekTo]);
+
+  // ------------------------------------------------------------- IA
+
+  const runAiTask = useCallback(
+    async <T,>(starting: string, task: () => Promise<T>): Promise<T | null> => {
+      setAiTask({ starting, progress: null });
+      try {
+        return await task();
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("Cancelado")) osd.show("Tarea cancelada");
+        else setError(msg);
+        return null;
+      } finally {
+        setAiTask(null);
+      }
+    },
+    [osd],
+  );
+
+  const translate = async () => {
+    const s = sourceRef.current;
+    const opt = subs.primary;
+    if (!s || !opt) {
+      osd.show("Activa antes unos subtítulos para traducirlos");
+      return;
+    }
+    const target = settings.targetLang;
+    if (opt.language === target) {
+      osd.show(`Estos subtítulos ya están en ${langName(target).toLowerCase()}`);
+      return;
+    }
+    const key = await aiApi.keyStatus().catch(() => null);
+    if (!key?.configured) {
+      setShowSettings(true);
+      osd.show("Añade tu clave de API de Claude para traducir", 3000);
+      return;
+    }
+    const vtt = await subs.getVtt(opt.id);
+    if (!vtt) return;
+    setShowTracks(false);
+    const out = await runAiTask("Traduciendo con Claude", () =>
+      aiApi.translate({ vtt, sourceLang: opt.language, targetLang: target, model: settings.translationModel, title: fileName(s.path) }),
+    );
+    if (out == null) return;
+    subs.addText({ id: `tr:${opt.id}:${target}`, label: `${langName(target)} (traducido)`, language: target, vtt: out }, "secondary");
+    osd.show(`Traducción lista: ${langName(target)} en la segunda línea`, 3000);
+  };
+
+  const transcribe = async () => {
+    const s = sourceRef.current;
+    if (!s) return;
+    const status = await aiApi.whisperStatus().catch(() => null);
+    const model = status?.models.find((m) => m.name === settings.whisperModel);
+    if (!status?.binary || !model?.downloaded) {
+      setShowSettings(true);
+      osd.show(!status?.binary ? "Falta instalar whisper-cpp (ver Ajustes)" : `Descarga el modelo «${settings.whisperModel}» en Ajustes`, 3500);
+      return;
+    }
+    setShowTracks(false);
+    const lang = settings.whisperLang;
+    const out = await runAiTask("Preparando Whisper", () =>
+      aiApi.transcribe({ path: s.path, audioTrack: s.audioTrack, language: lang, model: settings.whisperModel }),
+    );
+    if (out == null) return;
+    const label = `${lang === "auto" ? "Automático" : langName(lang)} (Whisper)`;
+    subs.addText({ id: `gen:${lang}:${s.audioTrack ?? 0}`, label, language: lang === "auto" ? null : lang, vtt: out }, "primary");
+    osd.show("Subtítulos generados", 2500);
+  };
+
+  const downloadModel = async (name: string) => {
+    await runAiTask("Descargando modelo", () => aiApi.downloadModel(name));
+  };
+
+  // ------------------------------------------------------------- teclado
+
   const handleAction = (a: Action) => {
     const v = videoRef.current;
     switch (a.type) {
       case "open":
         void openFiles();
         return;
+      case "settings":
+        setShowSettings((x) => !x);
+        return;
       case "togglePlaylist":
-        setShowPlaylist((x) => !x);
+        setShowSide((x) => !x);
         return;
       case "exitFullscreen":
-        if (fullscreen) void toggleFullscreen(false);
+        if (showSettings) setShowSettings(false);
+        else if (showTracks) setShowTracks(false);
+        else if (fullscreen) void toggleFullscreen(false);
         return;
       case "toggleFullscreen":
         void toggleFullscreen();
         return;
     }
-    if (!v || !source) return;
+    if (!v || !source || showSettings) return;
     poke();
     switch (a.type) {
       case "togglePlay":
@@ -397,24 +529,28 @@ export default function App() {
         else selectAudio(((source.audioTrack ?? 0) + 1) % n);
         break;
       }
-      case "cycleSubtitles": {
-        const ids = [null, ...subOptions.filter((o) => !o.disabled).map((o) => o.id)];
-        if (ids.length === 1) {
-          osd.show("No hay subtítulos disponibles");
-          break;
-        }
-        const i = ids.indexOf(activeSub);
-        void selectSubtitle(ids[(i + 1) % ids.length]);
+      case "cycleSubtitles":
+        subs.cycle();
         break;
-      }
       case "subtitleDelay": {
-        const d = Math.round((subDelay + a.delta) * 100) / 100;
-        setSubDelay(d);
+        const d = Math.round((subs.delay + a.delta) * 100) / 100;
+        subs.setDelay(d);
         osd.show(`Retardo de subtítulos ${formatDelay(d)}`);
         break;
       }
       case "showTime":
         osd.show(`${formatTime(timeRef.current)} / ${formatTime(duration)}`);
+        break;
+      case "abLoop": {
+        const next = abNext(ab, timeRef.current);
+        setAb(next);
+        if (next.a == null) osd.show("Repetición A‑B desactivada");
+        else if (next.b == null) osd.show(`A: ${formatTime(next.a)} · pulsa R otra vez para marcar B`, 2500);
+        else osd.show(`Repitiendo ${formatTime(next.a)} – ${formatTime(next.b)}`, 2500);
+        break;
+      }
+      case "addBookmark":
+        markNow();
         break;
     }
   };
@@ -422,7 +558,7 @@ export default function App() {
 
   // ------------------------------------------------------------- efectos
 
-  // Arranque: estado del backend, recientes, volumen y archivos del Finder.
+  // Arranque: estado del backend, recientes, volumen, ajustes y archivos del Finder.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let cancelled = false;
@@ -430,6 +566,7 @@ export default function App() {
       setBackendError(await api.backendStatus().catch(() => null));
       setRecents(await getRecents().catch(() => []));
       setVolume(await getVolume().catch(() => 1));
+      setSettings(await getSettings().catch(() => DEFAULT_SETTINGS));
       const pending = await api.takePendingFiles().catch(() => []);
       if (pending.length) await addPathsRef.current(pending);
       const u = await listen("ikusi://open-files", async () => {
@@ -439,6 +576,19 @@ export default function App() {
       if (cancelled) u();
       else unlisten = u;
     })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Avance de las tareas de IA.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    onAiProgress((p) => setAiTask((t) => (t ? { ...t, progress: p } : t))).then((u) =>
+      cancelled ? u() : (unlisten = u),
+    );
     return () => {
       cancelled = true;
       unlisten?.();
@@ -571,17 +721,14 @@ export default function App() {
       className={`app ${hideCursor ? "hide-cursor" : ""} ${fullscreen ? "is-fullscreen" : ""}`}
       onMouseMove={poke}
       onWheel={(e) => {
-        if (!hasMedia || showPlaylist || showTracks) return;
+        if (!hasMedia || showSide || showTracks || showSettings) return;
         const nv = changeVolume((muted ? 0 : volume) + (e.deltaY < 0 ? 0.05 : -0.05));
         osd.show(`Volumen ${Math.round(nv * 100)} %`);
       }}
     >
       <main className="stage" onDoubleClick={() => hasMedia && void toggleFullscreen()}>
         <video
-          ref={(el) => {
-            videoRef.current = el;
-            setVideoEl(el);
-          }}
+          ref={videoRef}
           className={hasMedia ? "" : "invisible"}
           playsInline
           onClick={togglePlay}
@@ -600,12 +747,24 @@ export default function App() {
           onError={onError}
         />
 
+        {hasMedia && (
+          <SubtitleOverlay
+            videoRef={videoRef}
+            offset={source.offset}
+            primary={subs.primaryCues}
+            secondary={subs.secondaryCues}
+            delay={subs.delay}
+            raised={controlsVisible}
+          />
+        )}
+
         {!hasMedia && !loading && (
           <EmptyState
             recents={recents}
             backendError={backendError}
             onOpen={() => void openFiles()}
             onOpenRecent={(p) => void addPaths([p])}
+            onSettings={() => setShowSettings(true)}
           />
         )}
 
@@ -625,6 +784,10 @@ export default function App() {
 
         {osd.message && <div className="osd">{osd.message}</div>}
 
+        {aiTask && (
+          <AiTaskToast progress={aiTask.progress} starting={aiTask.starting} onCancel={() => void aiApi.cancel()} />
+        )}
+
         {dragging && <div className="drop-overlay">Suelta para reproducir</div>}
 
         {hasMedia && (
@@ -641,6 +804,8 @@ export default function App() {
             fullscreen={fullscreen}
             hasPrev={index != null && index > 0}
             hasNext={index != null && index < items.length - 1}
+            markers={bookmarks.map((b) => b.time)}
+            ab={ab}
             onTogglePlay={togglePlay}
             onSeek={seekTo}
             onVolume={changeVolume}
@@ -648,9 +813,10 @@ export default function App() {
             onPrev={() => step(-1)}
             onNext={() => step(1)}
             onToggleFullscreen={() => void toggleFullscreen()}
-            onTogglePlaylist={() => setShowPlaylist((x) => !x)}
+            onTogglePlaylist={() => setShowSide((x) => !x)}
             onToggleTracks={() => setShowTracks((x) => !x)}
             onOpen={() => void openFiles()}
+            onSettings={() => setShowSettings(true)}
           />
         )}
 
@@ -658,22 +824,35 @@ export default function App() {
           <TrackMenu
             audio={source.info.audio}
             audioTrack={source.audioTrack}
-            subtitles={subOptions}
-            activeSubtitle={activeSub}
-            subtitleDelay={subDelay}
+            subtitles={subs.options}
+            primaryId={subs.primaryId}
+            secondaryId={subs.secondaryId}
+            subtitleDelay={subs.delay}
             rate={rate}
+            aiBusy={aiTask != null}
+            targetLang={settings.targetLang}
+            whisperLang={settings.whisperLang}
             onAudio={selectAudio}
-            onSubtitle={(id) => void selectSubtitle(id)}
+            onPrimary={(id) => void subs.select("primary", id)}
+            onSecondary={(id) => void subs.select("secondary", id)}
             onLoadSubtitleFile={() => void pickSubtitleFile()}
-            onDelay={(d) => setSubDelay(d == null ? 0 : Math.round((subDelay + d) * 100) / 100)}
+            onSaveSubtitles={() => void saveSubtitles()}
+            onDelay={(d) => subs.setDelay(d == null ? 0 : Math.round((subs.delay + d) * 100) / 100)}
             onRate={setRate}
+            onTargetLang={(c) => updateSettings({ ...settings, targetLang: c })}
+            onWhisperLang={(c) => updateSettings({ ...settings, whisperLang: c })}
+            onTranslate={() => void translate()}
+            onTranscribe={() => void transcribe()}
             onClose={() => setShowTracks(false)}
           />
         )}
       </main>
 
-      {showPlaylist && (
-        <Playlist
+      {showSide && (
+        <SidePanel
+          tab={sideTab}
+          onTab={setSideTab}
+          onClose={() => setShowSide(false)}
           items={items}
           current={index}
           onPlay={(i) => playIndex(i)}
@@ -687,7 +866,24 @@ export default function App() {
             setItems([]);
             void stopAll();
           }}
-          onClose={() => setShowPlaylist(false)}
+          bookmarks={bookmarks}
+          hasMedia={hasMedia}
+          onJump={(t) => seekTo(t)}
+          onNote={(id, note) => source && persistBookmarks(source.path, updateNote(bookmarks, id, note))}
+          onDeleteBookmark={(id) => source && persistBookmarks(source.path, removeBookmark(bookmarks, id))}
+          onAddBookmark={markNow}
+          onExport={() => void exportBookmarks()}
+          onCopy={() => void copyBookmarks()}
+        />
+      )}
+
+      {showSettings && (
+        <SettingsPanel
+          settings={settings}
+          busy={aiTask != null}
+          onChange={updateSettings}
+          onClose={() => setShowSettings(false)}
+          onDownloadModel={downloadModel}
         />
       )}
     </div>

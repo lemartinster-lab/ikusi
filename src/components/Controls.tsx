@@ -1,8 +1,9 @@
 import { useRef, useState } from "react";
+import type { AbState } from "../lib/abLoop";
 import { formatTime } from "../lib/formatTime";
 import type { PlaybackMode } from "../lib/types";
 import {
-  FullscreenIcon, ListIcon, NextIcon, OpenIcon, PauseIcon, PlayIcon, PrevIcon, TracksIcon, VolumeIcon,
+  FullscreenIcon, GearIcon, ListIcon, NextIcon, OpenIcon, PauseIcon, PlayIcon, PrevIcon, TracksIcon, VolumeIcon,
 } from "./Icons";
 
 interface Props {
@@ -19,6 +20,9 @@ interface Props {
   fullscreen: boolean;
   hasPrev: boolean;
   hasNext: boolean;
+  /** Tiempos de los marcadores, para pintarlos en la barra. */
+  markers: number[];
+  ab: AbState;
   onTogglePlay: () => void;
   onSeek: (t: number) => void;
   onVolume: (v: number) => void;
@@ -29,6 +33,7 @@ interface Props {
   onTogglePlaylist: () => void;
   onToggleTracks: () => void;
   onOpen: () => void;
+  onSettings: () => void;
 }
 
 const MODE_LABEL: Record<PlaybackMode, [string, string]> = {
@@ -56,6 +61,7 @@ export function Controls(p: Props) {
 
   const played = dur ? (p.time / dur) * 100 : 0;
   const available = dur ? (Math.min(p.availableEnd, dur) / dur) * 100 : 0;
+  const pct = (t: number) => `${dur ? (t / dur) * 100 : 0}%`;
 
   return (
     <div className={`controls ${p.visible ? "" : "hidden"}`} onDoubleClick={(e) => e.stopPropagation()}>
@@ -73,6 +79,16 @@ export function Controls(p: Props) {
         <div className="seek-track">
           <div className="seek-available" style={{ width: `${available}%` }} />
           <div className="seek-played" style={{ width: `${played}%` }} />
+          {p.ab.a != null && (
+            <div
+              className={`seek-ab ${p.ab.b == null ? "pending" : ""}`}
+              style={{ left: pct(p.ab.a), width: p.ab.b != null ? `calc(${pct(p.ab.b)} - ${pct(p.ab.a)})` : "2px" }}
+              title="Repetición A‑B (R)"
+            />
+          )}
+          {p.markers.map((t, i) => (
+            <div key={i} className="seek-marker" style={{ left: pct(t) }} />
+          ))}
           <div className="seek-thumb" style={{ left: `${played}%` }} />
         </div>
         {hover && <div className="seek-tooltip" style={{ left: hover.x }}>{formatTime(hover.t)}</div>}
@@ -95,6 +111,7 @@ export function Controls(p: Props) {
           <span className={`mode-badge mode-${p.mode}`} title={MODE_LABEL[p.mode][1]}>{MODE_LABEL[p.mode][0]}</span>
         )}
         {p.rate !== 1 && <span className="rate-badge">{p.rate}×</span>}
+        {p.ab.a != null && <span className="rate-badge ab-badge">{p.ab.b == null ? "A…" : "A‑B"}</span>}
 
         <div className="volume">
           <button className="icon-btn" onClick={p.onToggleMute} title="Silenciar (M)">
@@ -112,8 +129,9 @@ export function Controls(p: Props) {
         </div>
 
         <button className="icon-btn" onClick={p.onToggleTracks} title="Audio y subtítulos (V / B)"><TracksIcon /></button>
-        <button className="icon-btn" onClick={p.onTogglePlaylist} title="Lista de reproducción (L)"><ListIcon /></button>
+        <button className="icon-btn" onClick={p.onTogglePlaylist} title="Lista y marcadores (L)"><ListIcon /></button>
         <button className="icon-btn" onClick={p.onOpen} title="Abrir (Cmd+O)"><OpenIcon /></button>
+        <button className="icon-btn" onClick={p.onSettings} title="Ajustes (Cmd+,)"><GearIcon /></button>
         <button className="icon-btn" onClick={p.onToggleFullscreen} title="Pantalla completa (F)">
           <FullscreenIcon exit={p.fullscreen} />
         </button>

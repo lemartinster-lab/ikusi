@@ -16,7 +16,10 @@ export type Action =
   | { type: "subtitleDelay"; delta: number }
   | { type: "togglePlaylist" }
   | { type: "showTime" }
-  | { type: "open" };
+  | { type: "open" }
+  | { type: "abLoop" }
+  | { type: "addBookmark" }
+  | { type: "settings" };
 
 export interface KeyLike {
   key: string;
@@ -37,6 +40,8 @@ export function keyToAction(e: KeyLike): Action | null {
   const mod = e.metaKey || e.ctrlKey;
   // Cmd+O / Ctrl+O: abrir, como en cualquier app de Mac.
   if (mod && e.key.toLowerCase() === "o") return { type: "open" };
+  // Cmd+, : Ajustes, como en cualquier app de Mac.
+  if (mod && e.key === ",") return { type: "settings" };
 
   switch (e.key) {
     case " ":
@@ -82,6 +87,10 @@ export function keyToAction(e: KeyLike): Action | null {
       return { type: "togglePlaylist" };
     case "t":
       return { type: "showTime" };
+    case "r":
+      return { type: "abLoop" };
+    case "k":
+      return { type: "addBookmark" };
     default:
       return null;
   }
@@ -107,7 +116,10 @@ export const SHORTCUT_HELP: [string, string][] = [
   ["N / P", "Siguiente / anterior"],
   ["V / B", "Cambiar subtítulos / audio"],
   ["G / H", "Retardo de subtítulos −/+ 0,1 s"],
-  ["L", "Lista de reproducción"],
   ["T", "Mostrar tiempo"],
+  ["R", "Repetición A‑B (marcar A, marcar B, quitar)"],
+  ["K", "Añadir marcador"],
+  ["L", "Lista y marcadores"],
   ["Cmd+O", "Abrir archivos"],
+  ["Cmd+,", "Ajustes (clave de Claude, Whisper)"],
 ];

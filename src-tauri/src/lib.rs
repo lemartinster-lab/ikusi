@@ -1,7 +1,11 @@
 //! Capa Tauri de Ikusi: expone el núcleo (`ikusi-core`) como comandos para el
 //! frontend y gestiona los archivos abiertos desde el Finder.
 
+mod ai;
+mod secrets;
+
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use ikusi_core::binaries::Binaries;
@@ -17,14 +21,17 @@ use tauri::Emitter;
 
 /// El gestor de reproducción se crea al arrancar; si ffmpeg no está instalado
 /// se guarda el error para mostrarlo en la interfaz en lugar de cerrar la app.
-struct AppState {
+pub(crate) struct AppState {
     manager: Result<Arc<PlaybackManager>, String>,
     /// Archivos recibidos («Abrir con…») antes de que el frontend estuviera listo.
     pending_open: Mutex<Vec<String>>,
+    /// Tarea de IA en curso (solo una a la vez) y su indicador de cancelación.
+    ai_busy: Arc<AtomicBool>,
+    ai_cancel: Arc<AtomicBool>,
 }
 
 impl AppState {
-    fn manager(&self) -> Result<Arc<PlaybackManager>, String> {
+    pub(crate) fn manager(&self) -> Result<Arc<PlaybackManager>, String> {
         self.manager.clone()
     }
 }
@@ -110,6 +117,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
+            secrets::preload();
             let manager = tauri::async_runtime::block_on(async {
                 let bins = Binaries::locate().map_err(|e| e.to_string())?;
                 PlaybackManager::new(bins, VideoEncoder::platform_default())
@@ -125,7 +133,12 @@ pub fn run() {
                 .skip(1)
                 .filter(|a| !a.starts_with('-') && std::path::Path::new(a).is_file())
                 .collect();
-            app.manage(AppState { manager, pending_open: Mutex::new(cli_files) });
+            app.manage(AppState {
+                manager,
+                pending_open: Mutex::new(cli_files),
+                ai_busy: Arc::new(AtomicBool::new(false)),
+                ai_cancel: Arc::new(AtomicBool::new(false)),
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -135,7 +148,16 @@ pub fn run() {
             extract_subtitle,
             load_subtitle_file,
             take_pending_files,
-            backend_status
+            backend_status,
+            ai::api_key_status,
+            ai::set_api_key,
+            ai::delete_api_key,
+            ai::translate_subtitles,
+            ai::whisper_status,
+            ai::download_whisper_model,
+            ai::transcribe_media,
+            ai::cancel_ai_task,
+            ai::save_text_file
         ])
         .build(tauri::generate_context!())
         .expect("error al iniciar Ikusi");

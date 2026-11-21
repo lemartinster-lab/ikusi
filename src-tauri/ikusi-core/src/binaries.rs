@@ -34,6 +34,17 @@ impl Binaries {
     }
 }
 
+/// Localiza cualquier herramienta auxiliar (p. ej. `whisper-cli`) con el mismo
+/// orden de búsqueda que ffmpeg.
+pub fn locate_named(name: &str) -> Result<PathBuf> {
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf));
+    let env_dir = std::env::var_os("IKUSI_FFMPEG_DIR").map(PathBuf::from);
+    let path_var = std::env::var_os("PATH");
+    find(name, env_dir.as_deref(), exe_dir.as_deref(), path_var.as_deref())
+}
+
 const SYSTEM_DIRS: [&str; 3] = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"];
 
 /// Busca el binario `name` en el orden documentado arriba.

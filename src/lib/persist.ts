@@ -3,6 +3,7 @@
 
 import { LazyStore } from "@tauri-apps/plugin-store";
 import { pushRecent, RECENTS_KEY, type KeyValueStore } from "./resume";
+import { normalizeSettings, type Settings } from "./settings";
 
 const store = new LazyStore("ikusi.json", { defaults: {}, autoSave: 500 });
 
@@ -31,4 +32,12 @@ export async function getVolume(): Promise<number> {
 
 export async function setVolume(v: number): Promise<void> {
   await store.set("volume", v);
+}
+
+export async function getSettings(): Promise<Settings> {
+  return normalizeSettings(await store.get("settings"));
+}
+
+export async function saveSettings(s: Settings): Promise<void> {
+  await store.set("settings", s);
 }
