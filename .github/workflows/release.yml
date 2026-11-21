@@ -1,0 +1,47 @@
+name: Release
+
+# Publica un borrador de release con el .dmg para Mac Intel al subir una
+# etiqueta vX.Y.Z (p. ej. `git tag v0.1.0 && git push --tags`).
+# Requisito previo: Settings → Actions → General → Workflow permissions →
+# «Read and write permissions».
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  macos-intel:
+    # Los runners de GitHub ya son Apple Silicon: se compila en cruzado para Intel.
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Descargar ffmpeg y ffprobe (sidecars)
+        run: bash scripts/fetch-ffmpeg.sh x86_64-apple-darwin
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Ikusi ${{ github.ref_name }}"
+          releaseBody: "Reproductor multimedia personal. Ver README para instalar."
+          releaseDraft: true
+          args: --target x86_64-apple-darwin --config src-tauri/tauri.bundle.conf.json

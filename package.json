@@ -1,0 +1,45 @@
+{
+  "name": "ikusi",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Ikusi — reproductor multimedia personal tipo VLC (Tauri 2 + React + ffmpeg)",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml -p ikusi-core",
+    "tauri": "tauri",
+    "ffmpeg:fetch": "bash scripts/fetch-ffmpeg.sh",
+    "release:build": "tauri build --config src-tauri/tauri.bundle.conf.json"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.5.0",
+    "@tauri-apps/plugin-dialog": "^2.2.2",
+    "@tauri-apps/plugin-store": "^2.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.5.0",
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.23",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "~5.8.3",
+    "vite": "6.3.5",
+    "vitest": "^3.1.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "0.21.5"
+    },
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

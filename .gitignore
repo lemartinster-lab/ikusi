@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Rust / Tauri
+target/
+src-tauri/gen/schemas/
+
+# Binarios de ffmpeg descargados por scripts/fetch-ffmpeg.sh (no se versionan)
+src-tauri/binaries/ffmpeg-*
+src-tauri/binaries/ffprobe-*
